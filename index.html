@@ -10,6 +10,7 @@
     body { font-family: sans-serif; max-width: 700px; margin: auto; padding: 2em; }
     input[type=range] { width: 100%; }
     button { margin: 0.5em 0.5em 0.5em 0; padding: 0.5em 1em; }
+    #maskerDbDisplay { font-weight: bold; color: darkred; margin-top: 0.5em; }
   </style>
 </head>
 <body>
@@ -20,6 +21,8 @@
 
   <label>Masker Frequency: <span id="maskerFreqLabel">800</span> Hz</label>
   <input id="maskerFreq" type="range" min="200" max="3000" step="10" value="800"/>
+
+  <div id="maskerDbDisplay">Masker Volume: -60 dB</div>
 
   <div style="margin-top:1em;">
     <button id="startRamp">Start Ramp</button>
@@ -35,18 +38,18 @@
   <script>
     const probeFreqInput = document.getElementById('probeFreq');
     const maskerFreqInput = document.getElementById('maskerFreq');
-
     const probeLabel = document.getElementById('probeLabel');
     const maskerFreqLabel = document.getElementById('maskerFreqLabel');
+    const maskerDbDisplay = document.getElementById('maskerDbDisplay');
     const responsesList = document.getElementById('responses');
     const ctx = document.getElementById('ptcChart').getContext('2d');
 
     probeFreqInput.oninput = () => probeLabel.textContent = probeFreqInput.value;
     maskerFreqInput.oninput = () => maskerFreqLabel.textContent = maskerFreqInput.value;
 
-    const dbToGain = (db) => Math.pow(10, db / 20);
+    const dbToGain = (db) => 0.2 * Math.pow(10, db / 20);  // 0.2 to prevent speaker overload
 
-    let masker, maskerGain, maskerDb = -60, interval;
+    let masker, maskerGain, probe, maskerDb = -60, interval;
     const responses = [];
 
     const ptcChart = new Chart(ctx, {
@@ -76,30 +79,35 @@
       const maskerFreq = parseInt(maskerFreqInput.value);
       const probeFreq = parseInt(probeFreqInput.value);
 
-      // play probe
-      const probe = new Tone.Oscillator(probeFreq, 'sine').toDestination();
-      probe.start().stop('+1');
+      maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
 
+      // Start probe oscillator
+      probe = new Tone.Oscillator(probeFreq, 'sine').toDestination();
+      probe.start();
+
+      // Start masker oscillator with ramping gain
       masker = new Tone.Oscillator(maskerFreq, 'sine');
       maskerGain = new Tone.Gain(dbToGain(maskerDb)).toDestination();
       masker.connect(maskerGain);
       masker.start();
 
       interval = setInterval(() => {
-        maskerDb += 2;
-        if (maskerDb > 20) maskerDb = 20;
-        maskerGain.gain.value = dbToGain(maskerDb);
-      }, 1000); // 2 dB per second
+        if (maskerDb < 20) {
+          maskerDb += 2;
+          maskerGain.gain.value = dbToGain(maskerDb);
+          maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
+        }
+      }, 1000);
     };
 
     document.getElementById('stopRamp').onclick = () => {
       if (interval) clearInterval(interval);
       if (masker) masker.stop();
+      if (probe) probe.stop();
 
       const freq = parseInt(maskerFreqInput.value);
       const db = Math.round(maskerDb);
 
-      // Record result
       const li = document.createElement('li');
       li.textContent = `Freq: ${freq} Hz, Volume: ${db} dB`;
       responsesList.appendChild(li);
@@ -111,9 +119,9 @@
     };
 
     document.getElementById('downloadBtn').onclick = () => {
-      let csv = 'Masker Frequency (Hz),Masker Volume (dB)\\n';
+      let csv = 'Masker Frequency (Hz),Masker Volume (dB)\n';
       responses.forEach(r => {
-        csv += `${r.freq},${r.db}\\n`;
+        csv += `${r.freq},${r.db}\n`;
       });
 
       const blob = new Blob([csv], { type: 'text/csv' });
