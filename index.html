@@ -34,102 +34,132 @@
   <ul id="responses"></ul>
 
   <canvas id="ptcChart" width="600" height="300"></canvas>
+<script>
+  const probeFreqInput = document.getElementById('probeFreq');
+  const maskerFreqInput = document.getElementById('maskerFreq');
+  const probeLabel = document.getElementById('probeLabel');
+  const maskerFreqLabel = document.getElementById('maskerFreqLabel');
+  const maskerDbDisplay = document.getElementById('maskerDbDisplay');
+  const responsesList = document.getElementById('responses');
+  const ctx = document.getElementById('ptcChart').getContext('2d');
 
-  <script>
-    const probeFreqInput = document.getElementById('probeFreq');
-    const maskerFreqInput = document.getElementById('maskerFreq');
-    const probeLabel = document.getElementById('probeLabel');
-    const maskerFreqLabel = document.getElementById('maskerFreqLabel');
-    const maskerDbDisplay = document.getElementById('maskerDbDisplay');
-    const responsesList = document.getElementById('responses');
-    const ctx = document.getElementById('ptcChart').getContext('2d');
+  probeFreqInput.oninput = () => probeLabel.textContent = probeFreqInput.value;
+  maskerFreqInput.oninput = () => maskerFreqLabel.textContent = maskerFreqInput.value;
 
-    probeFreqInput.oninput = () => probeLabel.textContent = probeFreqInput.value;
-    maskerFreqInput.oninput = () => maskerFreqLabel.textContent = maskerFreqInput.value;
+  const dbToGain = (db) => 0.2 * Math.pow(10, db / 20); // prevent clipping
 
-    const dbToGain = (db) => 0.2 * Math.pow(10, db / 20);  // 0.2 to prevent speaker overload
+  let masker, maskerGain, probe, maskerDb = -60, interval;
+  const responses = [];
 
-    let masker, maskerGain, probe, maskerDb = -60, interval;
-    const responses = [];
-
-    const ptcChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: 'Masking Threshold (dB)',
-          data: [],
-          fill: false,
-          borderColor: 'blue',
-          tension: 0.1
-        }]
-      },
-      options: {
-        scales: {
-          x: { title: { display: true, text: 'Masker Frequency (Hz)' }},
-          y: { title: { display: true, text: 'Volume (dB)' }, reverse: true }
+  const ptcChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Masking Threshold (dB)',
+        data: [],
+        fill: false,
+        borderColor: 'blue',
+        tension: 0.1
+      }]
+    },
+    options: {
+      scales: {
+        x: {
+          title: { display: true, text: 'Masker Frequency (Hz)' }
+        },
+        y: {
+          title: { display: true, text: 'Volume (dB)' },
+          reverse: false, // normal orientation
+          min: -60,
+          max: 20,
+          ticks: {
+            stepSize: 10
+          }
         }
       }
-    });
+    }
+  });
 
-    document.getElementById('startRamp').onclick = async () => {
-      await Tone.start();
+  document.getElementById('startRamp').onclick = async () => {
+    await Tone.start();
 
-      maskerDb = -60;
-      const maskerFreq = parseInt(maskerFreqInput.value);
-      const probeFreq = parseInt(probeFreqInput.value);
+    maskerDb = -60;
+    const maskerFreq = parseInt(maskerFreqInput.value);
+    const probeFreq = parseInt(probeFreqInput.value);
+    maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
 
-      maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
+    // Start probe tone
+    probe = new Tone.Oscillator(probeFreq, 'sine').toDestination();
+    probe.start();
 
-      // Start probe oscillator
-      probe = new Tone.Oscillator(probeFreq, 'sine').toDestination();
-      probe.start();
+    // Start masker tone
+    masker = new Tone.Oscillator(maskerFreq, 'sine');
+    maskerGain = new Tone.Gain(dbToGain(maskerDb)).toDestination();
+    masker.connect(maskerGain);
+    masker.start();
 
-      // Start masker oscillator with ramping gain
-      masker = new Tone.Oscillator(maskerFreq, 'sine');
-      maskerGain = new Tone.Gain(dbToGain(maskerDb)).toDestination();
-      masker.connect(maskerGain);
-      masker.start();
+    interval = setInterval(() => {
+      if (maskerDb < 20) {
+        maskerDb += 2;
+        maskerGain.gain.value = dbToGain(maskerDb);
+        maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
+      }
+    }, 1000);
+  };
 
-      interval = setInterval(() => {
-        if (maskerDb < 20) {
-          maskerDb += 2;
-          maskerGain.gain.value = dbToGain(maskerDb);
-          maskerDbDisplay.textContent = `Masker Volume: ${maskerDb} dB`;
-        }
-      }, 1000);
-    };
+  document.getElementById('stopRamp').onclick = () => {
+    if (interval) clearInterval(interval);
+    if (masker) masker.stop();
+    if (probe) probe.stop();
 
-    document.getElementById('stopRamp').onclick = () => {
-      if (interval) clearInterval(interval);
-      if (masker) masker.stop();
-      if (probe) probe.stop();
+    const freq = parseInt(maskerFreqInput.value);
+    const db = Math.round(maskerDb);
 
-      const freq = parseInt(maskerFreqInput.value);
-      const db = Math.round(maskerDb);
+    responses.push({ freq, db });
+    updateChartAndList();
+  };
+
+  function updateChartAndList() {
+    ptcChart.data.labels = [];
+    ptcChart.data.datasets[0].data = [];
+    responsesList.innerHTML = '';
+
+    responses.forEach((r, i) => {
+      ptcChart.data.labels.push(r.freq);
+      ptcChart.data.datasets[0].data.push(r.db);
 
       const li = document.createElement('li');
-      li.textContent = `Freq: ${freq} Hz, Volume: ${db} dB`;
+      li.textContent = `Freq: ${r.freq} Hz, Volume: ${r.db} dB`;
+
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '❌';
+      delBtn.style.marginLeft = '10px';
+      delBtn.onclick = () => {
+        responses.splice(i, 1);
+        updateChartAndList();
+      };
+
+      li.appendChild(delBtn);
       responsesList.appendChild(li);
-      responses.push({ freq, db });
+    });
 
-      ptcChart.data.labels.push(freq);
-      ptcChart.data.datasets[0].data.push(db);
-      ptcChart.update();
-    };
+    ptcChart.update();
+  }
 
-    document.getElementById('downloadBtn').onclick = () => {
-      let csv = 'Masker Frequency (Hz),Masker Volume (dB)\n';
-      responses.forEach(r => {
-        csv += `${r.freq},${r.db}\n`;
-      });
+  document.getElementById('downloadBtn').onclick = () => {
+    let csv = 'Masker Frequency (Hz),Masker Volume (dB)\n';
+    responses.forEach(r => {
+      csv += `${r.freq},${r.db}\n`;
+    });
 
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'ptc_responses.csv';
-      a.click();
-    };
-  </script>
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ptc_responses.csv';
+    a.click();
+  };
+</script>
+
 </body>
 </html>
